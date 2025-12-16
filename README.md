@@ -25,3 +25,8 @@
 
 ## 📦 运行（Docker Hub 拉取）
 
+docker run -d
+-p 27018:3000
+-e MONGO_URI="mongodb://192.168.2.50:27017"
+-e DB_NAME="sehuatang"
+yourname/bt-api:latest
