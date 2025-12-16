@@ -10,9 +10,13 @@ const client = new MongoClient(MONGO_URI);
 const app = express();
 app.use(cors());
 
-// -------------------------
-// 分类规则
-// -------------------------
+// --------------------------------------------------
+// 排除不查询的集合
+// --------------------------------------------------
+const EXCLUDE_COLLECTIONS = [
+  "old_backup",
+  "test_merge"
+];
 
 // 中文资源
 const CHINESE_COLLECTIONS = [
@@ -27,38 +31,31 @@ const UC_COLLECTIONS = [
   "EU_US_no_mosaic"
 ];
 
-// 超高清资源 (UHD)
+// UHD（超高清）
 const UHD_COLLECTIONS = [
   "4k_video",
   "hd_chinese_subtitles"
 ];
 
-// -------------------------
-// 统一格式转换
-// -------------------------
+// --------------------------------------------------
+// 文档格式化函数
+// --------------------------------------------------
 function mapTorrent(doc, collectionName) {
   const number = doc.number || "";
   const rawTitle = doc.title || "";
   const finalTitle = number ? `[${number.toUpperCase()}] ${rawTitle}` : rawTitle;
 
-  // 中文判断
   const chinese = CHINESE_COLLECTIONS.includes(collectionName);
 
-  // 无码判断
   let uc = UC_COLLECTIONS.includes(collectionName);
+  if (rawTitle.includes("破解")) uc = true;
 
-  // 标题中包含 “破解” →无码
-  if (rawTitle.includes("破解")) {
-    uc = true;
-  }
-
-  // UHD 判断
   const uhd = UHD_COLLECTIONS.includes(collectionName);
 
   return {
     chinese,
     download_url: doc.magnet || doc.magnet_url || doc.download || "",
-    free: true,                      // 始终 true
+    free: true,
     id: Number(doc.tid || doc.id || 0),
     seeders: Number(doc.seeders || 0),
     site: "Sehuatang",
@@ -69,9 +66,9 @@ function mapTorrent(doc, collectionName) {
   };
 }
 
-// -------------------------
-// 搜索 API
-// -------------------------
+// --------------------------------------------------
+// 主查询 API
+// --------------------------------------------------
 app.get("/api/bt", async (req, res) => {
   const keyword = req.query.keyword;
   if (!keyword) return res.json({ data: [] });
@@ -83,9 +80,16 @@ app.get("/api/bt", async (req, res) => {
     const collections = await db.listCollections().toArray();
     let results = [];
 
-    console.log(`📨 请求 /api/bt?keyword=${keyword}`);
+    console.log(`📨 来自客户端的请求：keyword=${keyword}`);
 
     for (const col of collections) {
+
+      // 排除不要的集合
+      if (EXCLUDE_COLLECTIONS.includes(col.name)) {
+        console.log(`⏭️ 跳过集合：${col.name}`);
+        continue;
+      }
+
       console.log(`🔍 查询集合：${col.name}`);
 
       const c = db.collection(col.name);
@@ -99,18 +103,18 @@ app.get("/api/bt", async (req, res) => {
         })
         .toArray()
         .catch((err) => {
-          console.log(`❌ 查询失败 ${col.name}`, err);
+          console.log(`❌ 查询失败：${col.name}`, err);
           return [];
         });
 
-      console.log(`✔ 结果：${col.name} 返回 ${docs.length} 条`);
+      console.log(`✔ 返回 ${docs.length} 条记录：${col.name}`);
 
       for (const doc of docs) {
         results.push(mapTorrent(doc, col.name));
       }
     }
 
-    console.log(`📦 总返回：${results.length} 条\n`);
+    console.log(`📦 搜索完成，总返回：${results.length} 条\n`);
 
     res.json({ data: results });
 
@@ -120,5 +124,5 @@ app.get("/api/bt", async (req, res) => {
   }
 });
 
-// -------------------------
+// --------------------------------------------------
 app.listen(PORT, () => console.log(`🚀 BT API running on port ${PORT}`));
