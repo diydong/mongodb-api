@@ -5,7 +5,7 @@
 支持功能：
 - `/api/bt?keyword=xxxx`
 - 搜索所有集合
-- 自动匹配：number / title / name
+- 自动匹配：number / title 
 - 自动格式化 Torrent Model 输出
 - Docker 自动构建
 - 群晖 NAS 可直接运行
