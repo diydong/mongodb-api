@@ -196,9 +196,6 @@ app.get("/api/bt", async (req, res) => {
     console.log(`==============================\n`);
 
     return res.json({
-      page,
-      limit,
-      total: results.length,
       data: paged
     });
 
