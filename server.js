@@ -38,27 +38,27 @@ const UHD_COLLECTIONS = [
 // -------------------------
 function mapTorrent(doc, collectionName) {
   const number = doc.number || "";
-  const rawTitle = doc.title || doc.name || "";
+  const rawTitle = doc.title || "";
   const finalTitle = number ? `[${number.toUpperCase()}] ${rawTitle}` : rawTitle;
 
-  // Chinese flag
+  // 中文判断
   const chinese = CHINESE_COLLECTIONS.includes(collectionName);
 
-  // UC flag (有码/无码)
+  // 无码判断
   let uc = UC_COLLECTIONS.includes(collectionName);
 
-  // 若标题包含 “破解” → 自动标记为无码
+  // 标题中包含 “破解” →无码
   if (rawTitle.includes("破解")) {
     uc = true;
   }
 
-  // UHD flag
+  // UHD 判断
   const uhd = UHD_COLLECTIONS.includes(collectionName);
 
   return {
     chinese,
     download_url: doc.magnet || doc.magnet_url || doc.download || "",
-    free: true,
+    free: true,                      // 始终 true
     id: Number(doc.tid || doc.id || 0),
     seeders: Number(doc.seeders || 0),
     site: "Sehuatang",
@@ -70,7 +70,7 @@ function mapTorrent(doc, collectionName) {
 }
 
 // -------------------------
-// 主搜索 API
+// 搜索 API
 // -------------------------
 app.get("/api/bt", async (req, res) => {
   const keyword = req.query.keyword;
@@ -83,33 +83,42 @@ app.get("/api/bt", async (req, res) => {
     const collections = await db.listCollections().toArray();
     let results = [];
 
+    console.log(`📨 请求 /api/bt?keyword=${keyword}`);
+
     for (const col of collections) {
+      console.log(`🔍 查询集合：${col.name}`);
+
       const c = db.collection(col.name);
 
       const docs = await c
         .find({
           $or: [
             { number: { $regex: keyword, $options: "i" } },
-            { title: { $regex: keyword, $options: "i" } },
-            { name: { $regex: keyword, $options: "i" } }
+            { title: { $regex: keyword, $options: "i" } }
           ]
         })
         .toArray()
-        .catch(() => []);
+        .catch((err) => {
+          console.log(`❌ 查询失败 ${col.name}`, err);
+          return [];
+        });
+
+      console.log(`✔ 结果：${col.name} 返回 ${docs.length} 条`);
 
       for (const doc of docs) {
         results.push(mapTorrent(doc, col.name));
       }
     }
 
+    console.log(`📦 总返回：${results.length} 条\n`);
+
     res.json({ data: results });
 
   } catch (err) {
-    console.error("Error:", err);
+    console.error("❌ 服务器错误:", err);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
 // -------------------------
-app.listen(PORT, () => console.log(`BT API running on port ${PORT}`));
-
+app.listen(PORT, () => console.log(`🚀 BT API running on port ${PORT}`));
