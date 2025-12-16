@@ -24,4 +24,4 @@ jobs:
         with:
           context: .
           push: true
-          tags: momoxhs/mongodb-api:latest
+          tags: diydong/mongodb-api:latest
