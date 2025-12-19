@@ -15,7 +15,11 @@ app.use(cors());
 // 日志带时间
 // --------------------------------------------------
 function log(msg) {
-  const t = new Date().toISOString().replace("T", " ").split(".")[0];
+  const t = new Date().toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    hour12: false
+  }).replace(/\//g, "-");
+
   console.log(`[${t}] ${msg}`);
 }
 
