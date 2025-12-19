@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { MongoClient } from "mongodb";
+import fs from "fs";
 
 const MONGO_URI = process.env.MONGO_URI;
 const DB_NAME = process.env.DB_NAME;
@@ -11,8 +12,18 @@ const app = express();
 app.use(cors());
 
 // --------------------------------------------------
+// 日志带时间
+// --------------------------------------------------
+function log(msg) {
+  const t = new Date().toISOString().replace("T", " ").split(".")[0];
+  console.log(`[${t}] ${msg}`);
+}
+
+// --------------------------------------------------
 // 配置
 // --------------------------------------------------
+const PAGE_LIMIT = 50;
+
 const EXCLUDE_COLLECTIONS = ["old_backup", "test_merge"];
 
 const CHINESE_COLLECTIONS = ["hd_chinese_subtitles", "domestic_original"];
@@ -26,7 +37,7 @@ const UC_COLLECTIONS = [
 const UHD_COLLECTIONS = ["4k_video", "hd_chinese_subtitles"];
 
 // --------------------------------------------------
-// 缓存系统（TTL：1 小时）
+// 缓存系统
 // --------------------------------------------------
 const cache = new Map();
 const CACHE_TTL = 60 * 60 * 1000;
@@ -36,17 +47,17 @@ function setCache(key, data) {
 }
 
 function getCache(key) {
-  const c = cache.get(key);
-  if (!c) return null;
-  if (Date.now() > c.expire) {
+  const v = cache.get(key);
+  if (!v) return null;
+  if (Date.now() > v.expire) {
     cache.delete(key);
     return null;
   }
-  return c.data;
+  return v.data;
 }
 
 // --------------------------------------------------
-// 时间戳解析（用于排序）
+// 时间戳（排序用）
 // --------------------------------------------------
 function getTimestamp(doc) {
   if (doc._raw_time) return new Date(doc._raw_time).getTime();
@@ -54,7 +65,7 @@ function getTimestamp(doc) {
 }
 
 // --------------------------------------------------
-// 集合内部去重：同 number 或 title 只保留最新
+// 集合内部去重（保留最新）
 // --------------------------------------------------
 function dedupeInsideCollection(docs) {
   const map = new Map();
@@ -63,9 +74,15 @@ function dedupeInsideCollection(docs) {
     const key = doc.number || doc.title;
     if (!key) continue;
 
-    const old = map.get(key);
-    if (!old || getTimestamp(doc) > getTimestamp(old)) {
+    const prev = map.get(key);
+
+    if (!prev) {
       map.set(key, doc);
+    } else {
+      // 保留时间最新的
+      if (getTimestamp(doc) > getTimestamp(prev)) {
+        map.set(key, doc);
+      }
     }
   }
 
@@ -73,7 +90,7 @@ function dedupeInsideCollection(docs) {
 }
 
 // --------------------------------------------------
-// 统一格式转换
+// 文档格式转换
 // --------------------------------------------------
 function mapTorrent(doc, collectionName) {
   const number = doc.number || "";
@@ -107,28 +124,21 @@ function mapTorrent(doc, collectionName) {
 // --------------------------------------------------
 app.get("/api/bt", async (req, res) => {
   const keyword = (req.query.keyword || "").trim();
-  if (!keyword) {
-    console.log("⚠️ 空 keyword 请求");
-    return res.json({ data: [] });
-  }
+  if (!keyword) return res.json({ data: [] });
 
   const page = parseInt(req.query.page || "1", 10);
-  const limit = 50; // ⭐ 分页固定 50
-  const skip = (page - 1) * limit;
+  const skip = (page - 1) * PAGE_LIMIT;
 
   const cacheKey = `kw:${keyword.toLowerCase()}`;
-
-  // 读取缓存
   const cached = getCache(cacheKey);
+
   if (cached) {
-    console.log(`⚡ 缓存命中 → keyword=${keyword}, total=${cached.length}`);
-    const paged = cached.slice(skip, skip + limit);
-    return res.json({ page, limit, total: cached.length, data: paged });
+    log(`⚡ 缓存命中 keyword="${keyword}" total=${cached.length}`);
+    return res.json({ data: cached.slice(skip, skip + PAGE_LIMIT) });
   }
 
-  console.log(`\n==============================`);
-  console.log(`🔎 新查询 -> keyword="${keyword}"`);
-  console.log(`==============================`);
+  log(`\n==============================`);
+  log(`🔎 keyword="${keyword}"`);
 
   try {
     await client.connect();
@@ -140,13 +150,9 @@ app.get("/api/bt", async (req, res) => {
     for (const col of collections) {
       const colName = col.name;
 
-      // 排除集合
       if (EXCLUDE_COLLECTIONS.includes(colName)) {
-        console.log(`⏭️ 跳过集合：${colName}`);
         continue;
       }
-
-      console.log(`➡️ 查询集合：${colName}`);
 
       const docs = await db
         .collection(colName)
@@ -157,54 +163,51 @@ app.get("/api/bt", async (req, res) => {
           ]
         })
         .toArray()
-        .catch((err) => {
-          console.log(`❌ 查询失败：${colName}`, err);
-          return [];
-        });
+        .catch(() => []);
 
-      console.log(`   ↪ 原始 ${docs.length} 条`);
+      if (docs.length === 0) {
+        continue;
+      }
 
-      // 集合内部去重
+      // 去重前数量
+      const before = docs.length;
+
+      // 集合内去重（保留最新）
       const cleaned = dedupeInsideCollection(docs);
-      console.log(`   ↪ 去重后：${cleaned.length} 条`);
 
-      // 标准化
+      // ⭐ 显示去重日志
+      log(`→ ${colName}: 原始=${before} 去重后=${cleaned.length}`);
+
       for (const doc of cleaned) {
         results.push(mapTorrent(doc, colName));
       }
     }
 
-    console.log(`📦 所有集合合并后共：${results.length} 条`);
+    log(`✔ 合并后=${results.length} 条`);
 
-    // 全局按时间排序
+    // 全局排序
     results.sort((a, b) => getTimestamp(b) - getTimestamp(a));
-    console.log(`📌 已按时间排序`);
+    log(`✔ 排序完成`);
 
     // 删除内部字段
-    results = results.map((r) => {
-      delete r._raw_time;
-      return r;
+    results = results.map(r => {
+      const { _raw_time, ...clean } = r;
+      return clean;
     });
 
-    // 写入缓存
     setCache(cacheKey, results);
 
-    // 分页
-    const paged = results.slice(skip, skip + limit);
+    const paged = results.slice(skip, skip + PAGE_LIMIT);
 
-    console.log(`📄 分页：page=${page}, limit=${limit}, 返回=${paged.length}`);
-    console.log(`==============================\n`);
+    log(`✔ 分页 page=${page}, limit=${PAGE_LIMIT}, 返回=${paged.length}`);
+    log(`==============================\n`);
 
-    return res.json({
-      data: paged
-    });
+    return res.json({ data: paged });
 
   } catch (err) {
-    console.error("❌ ERROR:", err);
+    log(`❌ ERROR: ${err}`);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-app.listen(PORT, () =>
-  console.log(`🚀 BT API running on port ${PORT}`)
-);
+app.listen(PORT, () => log(`🚀 BT API running on port ${PORT}`));
