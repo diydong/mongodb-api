@@ -69,15 +69,16 @@ function getTimestamp(doc) {
 }
 
 // --------------------------------------------------
-// 集合内部去重（保留最新）
+// 集合内部去重（按 tid，保留最新）
 // --------------------------------------------------
 function dedupeInsideCollection(docs) {
   const map = new Map();
 
   for (const doc of docs) {
-    const key = doc.number || doc.title;
-    if (!key) continue;
+    const tid = doc.tid || doc.id;
+    if (!tid) continue; // 没 tid 的直接丢弃（更干净）
 
+    const key = String(tid);
     const prev = map.get(key);
 
     if (!prev) {
@@ -92,6 +93,7 @@ function dedupeInsideCollection(docs) {
 
   return [...map.values()];
 }
+
 
 // --------------------------------------------------
 // 文档格式转换
